@@ -1,0 +1,17 @@
+# PDF Extractor - Requirements
+# Open-source libraries for fast and efficient PDF extraction
+
+# Core PDF processing
+PyMuPDF>=1.23.0          # Fast PDF rendering and text/image extraction (fitz)
+pdfplumber>=0.10.0       # Accurate table detection and extraction
+
+# Image processing
+Pillow>=10.0.0           # Image format conversion and manipulation
+
+# Optional - OCR support (uncomment if needed)
+# pytesseract>=0.3.10    # OCR for scanned PDFs (requires Tesseract installed)
+# pdf2image>=1.16.0      # Convert PDF pages to images for OCR
+
+# Development and testing
+pytest>=7.0.0            # Testing framework
+pytest-cov>=4.0.0        # Test coverage
