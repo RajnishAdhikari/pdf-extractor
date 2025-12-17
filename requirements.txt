@@ -8,9 +8,9 @@ pdfplumber>=0.10.0       # Accurate table detection and extraction
 # Image processing
 Pillow>=10.0.0           # Image format conversion and manipulation
 
-# Optional - OCR support (uncomment if needed)
-# pytesseract>=0.3.10    # OCR for scanned PDFs (requires Tesseract installed)
-# pdf2image>=1.16.0      # Convert PDF pages to images for OCR
+# OCR - For scanned PDFs and images
+easyocr>=1.7.0           # Open-source OCR (no API required)
+numpy>=1.24.0            # Required for EasyOCR
 
 # Development and testing
 pytest>=7.0.0            # Testing framework
