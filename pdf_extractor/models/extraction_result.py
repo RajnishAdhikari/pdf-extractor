@@ -40,7 +40,7 @@ class ImageResult:
     image_index: int
     width: int = 0
     height: int = 0
-    format: str = ""
+    format: str = "png"
     size_bytes: int = 0
     
     def to_dict(self) -> Dict[str, Any]:

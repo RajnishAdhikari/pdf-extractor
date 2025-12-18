@@ -1,14 +1,14 @@
 """
 OCR Extractor Module (Tesseract-based)
-Extracts text from scanned PDFs and images using Tesseract OCR.
+Extracts text from scanned PDFs using Tesseract OCR.
 Open-source, no API required, works offline.
 """
 
-import os
+import fitz  # PyMuPDF
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 import json
-import re
+import io
 
 try:
     import pytesseract
@@ -24,9 +24,9 @@ from ..utils.file_utils import ensure_directory, get_pdf_name
 
 class OCRExtractor:
     """
-    Extracts text from images and scanned PDFs using Tesseract OCR.
+    Extracts text from scanned PDFs using Tesseract OCR.
     
-    Uses pytesseract for accurate text recognition.
+    Converts PDF pages to images internally, then runs OCR.
     Supports multiple languages and batch processing.
     """
     
@@ -34,7 +34,8 @@ class OCRExtractor:
         self,
         lang: str = 'eng',
         config: str = '',
-        tesseract_cmd: Optional[str] = None
+        tesseract_cmd: Optional[str] = None,
+        dpi: int = 300
     ):
         """
         Initialize the OCR extractor.
@@ -43,9 +44,11 @@ class OCRExtractor:
             lang: Tesseract language code (default: 'eng')
             config: Additional Tesseract config options
             tesseract_cmd: Path to Tesseract executable (if not in PATH)
+            dpi: Resolution for PDF to image conversion (default: 300)
         """
         self.lang = lang
         self.config = config
+        self.dpi = dpi
         self.logger = get_logger("pdf_extractor.ocr")
         
         if tesseract_cmd:
@@ -56,16 +59,34 @@ class OCRExtractor:
                 "pytesseract not installed. Install with: pip install pytesseract"
             )
     
-    def extract_from_image(
-        self,
-        image_path: str,
-        page_number: int = 1
-    ) -> TextResult:
+    def _pdf_page_to_image(self, page: fitz.Page) -> Image.Image:
         """
-        Extract text from a single image.
+        Convert a PDF page to a PIL Image.
         
         Args:
-            image_path: Path to the image file
+            page: PyMuPDF page object
+            
+        Returns:
+            PIL Image object
+        """
+        zoom = self.dpi / 72.0
+        matrix = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=matrix)
+        
+        # Convert to PIL Image
+        img_data = pix.tobytes("png")
+        return Image.open(io.BytesIO(img_data))
+    
+    def extract_from_page(
+        self,
+        page: fitz.Page,
+        page_number: int
+    ) -> TextResult:
+        """
+        Extract text from a single PDF page using OCR.
+        
+        Args:
+            page: PyMuPDF page object
             page_number: Page number to assign
             
         Returns:
@@ -75,10 +96,10 @@ class OCRExtractor:
             return TextResult(content="[OCR not available]", page_number=page_number)
         
         try:
-            self.logger.info(f"Running OCR on: {image_path}")
+            self.logger.info(f"Running OCR on page {page_number}")
             
-            # Open image
-            image = Image.open(image_path)
+            # Convert PDF page to image
+            image = self._pdf_page_to_image(page)
             
             # Run OCR
             text = pytesseract.image_to_string(
@@ -93,19 +114,19 @@ class OCRExtractor:
             )
             
         except Exception as e:
-            self.logger.error(f"OCR failed for {image_path}: {e}")
+            self.logger.error(f"OCR failed for page {page_number}: {e}")
             return TextResult(content="", page_number=page_number)
     
     def extract_with_positions(
         self,
-        image_path: str,
-        page_number: int = 1
+        page: fitz.Page,
+        page_number: int
     ) -> Dict[str, Any]:
         """
-        Extract text with bounding box positions.
+        Extract text with bounding box positions from a PDF page.
         
         Args:
-            image_path: Path to image file
+            page: PyMuPDF page object
             page_number: Page number
             
         Returns:
@@ -115,7 +136,7 @@ class OCRExtractor:
             return {"page_number": page_number, "blocks": []}
         
         try:
-            image = Image.open(image_path)
+            image = self._pdf_page_to_image(page)
             
             # Get detailed data
             data = pytesseract.image_to_data(
@@ -148,7 +169,6 @@ class OCRExtractor:
             
             return {
                 "page_number": page_number,
-                "image_path": image_path,
                 "total_blocks": len(blocks),
                 "blocks": blocks
             }
@@ -157,85 +177,149 @@ class OCRExtractor:
             self.logger.error(f"OCR with positions failed: {e}")
             return {"page_number": page_number, "blocks": []}
     
-    def extract_from_folder(
+    def extract_from_pdf(
         self,
-        folder_path: str,
-        output_dir: Optional[str] = None,
-        extensions: List[str] = None
-    ) -> List[Dict[str, Any]]:
+        pdf_path: str,
+        pages: Optional[List[int]] = None,
+        output_dir: Optional[str] = None
+    ) -> List[TextResult]:
         """
-        Extract text from all images in a folder.
+        Extract text from a PDF file using OCR.
         
         Args:
-            folder_path: Path to folder containing images
+            pdf_path: Path to the PDF file
+            pages: List of page numbers to extract (1-indexed), None for all
             output_dir: Optional directory to save results
-            extensions: Image extensions to process
             
         Returns:
-            List of extraction results per image
+            List of TextResult objects
         """
-        extensions = extensions or ['.jpg', '.jpeg', '.png', '.tiff', '.bmp']
-        folder = Path(folder_path)
+        self.logger.info(f"Running OCR on PDF: {pdf_path}")
         
-        if not folder.exists():
-            raise FileNotFoundError(f"Folder not found: {folder_path}")
+        doc = fitz.open(pdf_path)
+        total_pages = len(doc)
         
-        # Find all image files
-        image_files = []
-        for ext in extensions:
-            image_files.extend(folder.glob(f"*{ext}"))
-            image_files.extend(folder.glob(f"*{ext.upper()}"))
-        
-        image_files = sorted(set(image_files))
-        self.logger.info(f"Found {len(image_files)} images to process")
+        if pages is None:
+            pages = list(range(1, total_pages + 1))
         
         results = []
         
-        for idx, image_path in enumerate(image_files, 1):
-            self.logger.info(f"Processing [{idx}/{len(image_files)}]: {image_path.name}")
-            
-            result = self.extract_with_positions(str(image_path), page_number=idx)
-            result["filename"] = image_path.name
-            results.append(result)
+        for page_num in pages:
+            if 1 <= page_num <= total_pages:
+                self.logger.info(f"Processing page [{page_num}/{total_pages}]")
+                page = doc[page_num - 1]
+                result = self.extract_from_page(page, page_num)
+                results.append(result)
         
-        # Save results
+        doc.close()
+        
+        # Save results if output directory specified
+        if output_dir:
+            self._save_results(results, output_dir, pdf_path)
+        
+        self.logger.info(f"OCR complete: {len(results)} pages processed")
+        return results
+    
+    def extract_with_positions_from_pdf(
+        self,
+        pdf_path: str,
+        pages: Optional[List[int]] = None,
+        output_dir: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract text with positions from a PDF file using OCR.
+        
+        Args:
+            pdf_path: Path to PDF file
+            pages: List of page numbers (1-indexed), None for all
+            output_dir: Optional directory to save results
+            
+        Returns:
+            List of dictionaries with text blocks and positions
+        """
+        self.logger.info(f"Running OCR with positions on PDF: {pdf_path}")
+        
+        doc = fitz.open(pdf_path)
+        total_pages = len(doc)
+        
+        if pages is None:
+            pages = list(range(1, total_pages + 1))
+        
+        results = []
+        
+        for page_num in pages:
+            if 1 <= page_num <= total_pages:
+                self.logger.info(f"Processing page [{page_num}/{total_pages}]")
+                page = doc[page_num - 1]
+                result = self.extract_with_positions(page, page_num)
+                results.append(result)
+        
+        doc.close()
+        
+        # Save results if output directory specified
         if output_dir:
             ensure_directory(output_dir)
-            output_path = Path(output_dir) / "ocr_results.json"
+            pdf_name = get_pdf_name(pdf_path)
+            output_path = Path(output_dir) / pdf_name / "ocr_positions.json"
+            ensure_directory(output_path.parent)
             
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, indent=2, ensure_ascii=False)
             
-            self.logger.info(f"Saved OCR results to: {output_path}")
-            
-            # Save text files
-            for result in results:
-                text_file = Path(output_dir) / f"{Path(result['filename']).stem}_text.txt"
-                all_text = "\n".join([b['text'] for b in result['blocks']])
-                
-                with open(text_file, 'w', encoding='utf-8') as f:
-                    f.write(f"Page {result['page_number']}: {result['filename']}\n")
-                    f.write("=" * 50 + "\n\n")
-                    f.write(all_text)
+            self.logger.info(f"Saved OCR position results to: {output_path}")
         
         return results
     
+    def _save_results(
+        self,
+        results: List[TextResult],
+        output_dir: str,
+        pdf_path: str
+    ) -> None:
+        """
+        Save OCR results to files.
+        
+        Args:
+            results: List of TextResult objects
+            output_dir: Output directory
+            pdf_path: Source PDF path
+        """
+        ensure_directory(output_dir)
+        pdf_name = get_pdf_name(pdf_path)
+        output_folder = Path(output_dir) / pdf_name
+        ensure_directory(output_folder)
+        
+        # Save combined text
+        combined_path = output_folder / "ocr_text.txt"
+        with open(combined_path, 'w', encoding='utf-8') as f:
+            for result in results:
+                f.write(f"=== Page {result.page_number} ===\n")
+                f.write(result.content)
+                f.write("\n\n")
+        
+        # Save JSON
+        json_path = output_folder / "ocr_results.json"
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump([r.to_dict() for r in results], f, indent=2, ensure_ascii=False)
+        
+        self.logger.info(f"Saved OCR results to: {output_folder}")
+    
     def extract_tables_ocr(
         self,
-        image_path: str,
-        page_number: int = 1
+        page: fitz.Page,
+        page_number: int
     ) -> List[Dict[str, Any]]:
         """
         Attempt to extract table-like structures from OCR results.
         
         Args:
-            image_path: Path to image
+            page: PyMuPDF page object
             page_number: Page number
             
         Returns:
             List of potential table rows
         """
-        result = self.extract_with_positions(image_path, page_number)
+        result = self.extract_with_positions(page, page_number)
         
         if not result['blocks']:
             return []
