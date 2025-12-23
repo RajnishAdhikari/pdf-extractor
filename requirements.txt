@@ -1,0 +1,25 @@
+# PDF Extraction Pipeline Dependencies
+
+# PDF Processing
+PyMuPDF>=1.23.0
+
+# OCR
+paddlepaddle>=2.5.0
+paddleocr>=2.7.0
+
+# Table Detection (Table Transformer)
+transformers>=4.35.0
+timm>=0.9.0
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Image Processing
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# RAG Setup
+faiss-cpu>=1.7.4
+sentence-transformers>=2.2.0
+
+# Utilities
+tqdm>=4.65.0
